@@ -1,6 +1,7 @@
 // Umpan balik pemain: HUD (skor / jarak ke kebebasan / nyawa / stamina),
 // suara orisinal dari WebAudio (tanpa file eksternal), partikel & teks melayang.
 import { freedomProgress } from './world.js';
+import { mulberry32 } from './rng.js';
 
 let audioCtx = null;
 let muted = false;
@@ -66,14 +67,17 @@ export const audio = {
 };
 
 // ---- partikel & teks melayang (kosmetik, seed tetap saat screenshot) ----
+// RNG ber-seed (mulberry32) supaya pola partikel deterministik dari seed yang
+// sama — bukan Math.random yang tak bisa diulang.
+let effectsRng = mulberry32(20261127);
 const particles = [];
 const floats = [];
 
 export function spawnParticles(x, y, color, n) {
   for (let i = 0; i < n; i += 1) {
-    const a = Math.random() * Math.PI * 2;
-    const s = 30 + Math.random() * 90;
-    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 30, life: 0.6 + Math.random() * 0.4, t: 0, color });
+    const a = effectsRng() * Math.PI * 2;
+    const s = 30 + effectsRng() * 90;
+    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 30, life: 0.6 + effectsRng() * 0.4, t: 0, color });
   }
 }
 

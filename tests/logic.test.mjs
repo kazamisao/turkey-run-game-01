@@ -9,7 +9,7 @@ import { mulberry32 } from '../game/src/rng.js';
 import { createTurkey, updateTurkey } from '../game/src/turkey.js';
 import { createFarmer, updateFarmer, farmerSeesTurkey } from '../game/src/farmerAI.js';
 import { STAGES, createStageState } from '../game/src/stages.js';
-import { createWorld, startGame, startStage, updateWorld } from '../game/src/world.js';
+import { createWorld, startGame, startStage, updateWorld, freedomProgress } from '../game/src/world.js';
 
 const WALL = { x: 100, y: 100, w: 40, h: 200 };
 const EMPTY_STAGE = {
@@ -234,13 +234,15 @@ test('world: semburan oven di zona panas mengurangi nyawa', () => {
   assert.ok(w.invulnTimer > 0, 'harus ada jeda kebal sesudah kena');
 });
 
-test('world: sapuan pisau aktif di zona mengurangi nyawa, lompat menghindarinya', () => {
+test('world: sapuan pisau aktif di bilah mengurangi nyawa, lompat menghindarinya', () => {
   const w = freshWorld();
   startStage(w, 1);
   w.invulnTimer = 0;
   const knife = w.stage.def.hazards.knife;
   const lives = w.lives;
-  w.turkey.x = knife.zone.x + 5;
+  // Bilah setelah dt 0.1: timer 0.3+0.1=0.4, p=0.8, bx = 350 + 0.8*(260-30) = 534.
+  const bx = knife.zone.x + Math.min(1, (0.3 + 0.1) / knife.sweep) * (knife.zone.w - 30);
+  w.turkey.x = bx;
   w.turkey.y = knife.zone.y + 5;
   w.stage.hazard.phase = 'sweep';
   w.stage.hazard.timer = 0.3;
@@ -250,7 +252,7 @@ test('world: sapuan pisau aktif di zona mengurangi nyawa, lompat menghindarinya'
   const w2 = freshWorld();
   startStage(w2, 1);
   w2.invulnTimer = 0;
-  w2.turkey.x = knife.zone.x + 5;
+  w2.turkey.x = bx;
   w2.turkey.y = knife.zone.y + 5;
   w2.stage.hazard.phase = 'sweep';
   w2.stage.hazard.timer = 0.3;
@@ -324,3 +326,162 @@ test('world: petani menangkap kalkun saat bersentuhan', () => {
   assert.equal(w.lives, lives - 1);
   assert.ok(w.turkey.x !== 0 || w.stageIndex === 0, 'kalkun harus respawn di awal stage');
 });
+
+// ---- perbaikan review (TDD: ditulis dulu, saksikan gagal) ----
+// I1: petani mengejar harus lebih cepat dari kalkun berjalan (170).
+test('I1: petani mengejar menutup jarak pada kalkun yang berjalan lurus menjauh', () => {
+  const f = createFarmer(100, 100, [{ x: 100, y: 100 }, { x: 900, y: 100 }]);
+  f.angle = 0;
+  f.state = 'chase';
+  f.lastSeen = { x: 200, y: 100 };
+  const t = createTurkey(200, 100);
+  const ctx = { turkey: t, walls: [], bait: null, noise: null };
+  const d0 = Math.hypot(f.x - t.x, f.y - t.y);
+  for (let i = 0; i < 30; i += 1) {
+    updateTurkey(t, { ...NO_INPUT, mx: 1 }, 0.1, EMPTY_STAGE);
+    updateFarmer(f, 0.1, ctx);
+  }
+  const d1 = Math.hypot(f.x - t.x, f.y - t.y);
+  assert.ok(d1 < d0, `jarak harus mengecil saat kejar: ${d0.toFixed(1)} -> ${d1.toFixed(1)}`);
+});
+
+// I3: regen stamina ganda saat diam — harus tepat 20/dtk.
+test('I3: stamina diam 1 detik pulih tepat 20 (50 -> 70)', () => {
+  const t = createTurkey(100, 100);
+  t.stamina = 50;
+  updateTurkey(t, NO_INPUT, 1, EMPTY_STAGE);
+  assert.equal(t.stamina, 70);
+});
+
+// I3 (keputusan: jalan kaki tanpa sprint memang tidak regen — dikunci uji).
+test('I3: jalan kaki tanpa sprint tidak memulihkan stamina', () => {
+  const t = createTurkey(100, 100);
+  t.stamina = 40;
+  updateTurkey(t, { ...NO_INPUT, mx: 1 }, 1, EMPTY_STAGE);
+  assert.equal(t.stamina, 40);
+});
+
+// M1: hitbox pisau = posisi bilah, bukan seluruh zona.
+test('M1: sapuan pisau tidak kena kalkun yang jauh dari bilah walau di dalam zona', () => {
+  const w = freshWorld();
+  startStage(w, 1);
+  w.invulnTimer = 0;
+  const knife = w.stage.def.hazards.knife;
+  // Bilah di awal sapuan (timer 0 -> bx ~350+); kalkun di ujung jauh zona.
+  w.turkey.x = knife.zone.x + knife.zone.w - 5;
+  w.turkey.y = knife.zone.y + 5;
+  w.stage.hazard.phase = 'sweep';
+  w.stage.hazard.timer = 0;
+  const lives = w.lives;
+  updateWorld(w, NO_INPUT, 0.1);
+  assert.equal(w.lives, lives, 'kalkun jauh dari bilah tidak boleh kena');
+});
+
+test('M1: sapuan pisau kena kalkun yang tepat di bilah', () => {
+  const w = freshWorld();
+  startStage(w, 1);
+  w.invulnTimer = 0;
+  const knife = w.stage.def.hazards.knife;
+  // Setelah dt 0.1: timer 0.3+0.1=0.4, p=0.8, bx = 350 + 0.8*(260-30) = 534.
+  const bx = knife.zone.x + Math.min(1, (0.3 + 0.1) / knife.sweep) * (knife.zone.w - 30);
+  w.turkey.x = bx;
+  w.turkey.y = knife.zone.y + 5;
+  w.stage.hazard.phase = 'sweep';
+  w.stage.hazard.timer = 0.3;
+  const lives = w.lives;
+  updateWorld(w, NO_INPUT, 0.1);
+  assert.equal(w.lives, lives - 1, 'kalkun di bilah harus kena');
+});
+
+// I2: updateWorld mengembalikan event agar main.js bisa memetakan ke suara.
+test('I2: updateWorld mengembalikan event spotted saat petani mulai mengejar', () => {
+  const w = freshWorld();
+  w.farmer.x = 480; w.farmer.y = 300; w.farmer.angle = 0;
+  w.turkey.x = 600; w.turkey.y = 300;
+  const events = [];
+  events.push(...updateWorld(w, NO_INPUT, 0.2));
+  events.push(...updateWorld(w, NO_INPUT, 0.6));
+  assert.ok(events.some((e) => e.type === 'spotted'), `harus ada event spotted, dapat: ${JSON.stringify(events)}`);
+});
+
+test('I2: updateWorld mengembalikan event hurt saat kena bahaya dan caught saat tertangkap', () => {
+  const w = freshWorld();
+  startStage(w, 2);
+  w.invulnTimer = 0;
+  const oven = w.stage.def.hazards.oven;
+  w.turkey.x = oven.zone.x + 5;
+  w.turkey.y = oven.zone.y + 5;
+  w.stage.hazard.phase = 'burst';
+  w.stage.hazard.timer = 0.5;
+  const evHurt = updateWorld(w, NO_INPUT, 0.1);
+  assert.ok(evHurt.some((e) => e.type === 'hurt'), `harus ada event hurt, dapat: ${JSON.stringify(evHurt)}`);
+
+  const w2 = freshWorld();
+  w2.invulnTimer = 0;
+  w2.farmer.state = 'chase';
+  w2.farmer.x = w2.turkey.x + 10;
+  w2.farmer.y = w2.turkey.y;
+  const evCaught = updateWorld(w2, NO_INPUT, 0.1);
+  assert.ok(evCaught.some((e) => e.type === 'caught'), `harus ada event caught, dapat: ${JSON.stringify(evCaught)}`);
+});
+
+test('I2: updateWorld mengembalikan event stageClear, success, knife, oven, creak, corn', () => {
+  // stageClear: keluar stage 1
+  const w = freshWorld();
+  w.turkey.x = w.stage.def.exit.x + 5;
+  w.turkey.y = w.stage.def.exit.y + 5;
+  const evClear = updateWorld(w, NO_INPUT, 0.1);
+  assert.ok(evClear.some((e) => e.type === 'stageClear'), `harus ada stageClear, dapat: ${JSON.stringify(evClear)}`);
+
+  // success: kabur dari stage terakhir
+  const w2 = freshWorld();
+  startStage(w2, 2);
+  w2.turkey.x = w2.stage.def.exit.x + 5;
+  w2.turkey.y = w2.stage.def.exit.y + 5;
+  w2.exitChannel = 5;
+  const evWin = updateWorld(w2, NO_INPUT, 0.1);
+  assert.ok(evWin.some((e) => e.type === 'success'), `harus ada success, dapat: ${JSON.stringify(evWin)}`);
+
+  // knife: pisau masuk fase sweep
+  const w3 = freshWorld();
+  startStage(w3, 1);
+  w3.stage.hazard.phase = 'telegraph';
+  w3.stage.hazard.timer = 0.75;
+  const evKnife = updateWorld(w3, NO_INPUT, 0.1);
+  assert.ok(evKnife.some((e) => e.type === 'knife'), `harus ada knife, dapat: ${JSON.stringify(evKnife)}`);
+
+  // oven: oven masuk fase burst
+  const w4 = freshWorld();
+  startStage(w4, 2);
+  w4.stage.hazard.phase = 'telegraph';
+  w4.stage.hazard.timer = 0.65;
+  const evOven = updateWorld(w4, NO_INPUT, 0.1);
+  assert.ok(evOven.some((e) => e.type === 'oven'), `harus ada oven, dapat: ${JSON.stringify(evOven)}`);
+
+  // creak: pertama kali masuk pintu ber-channel
+  const w5 = freshWorld();
+  startStage(w5, 1);
+  w5.turkey.x = w5.stage.def.exit.x + 5;
+  w5.turkey.y = w5.stage.def.exit.y + 5;
+  const evCreak = updateWorld(w5, NO_INPUT, 0.1);
+  assert.ok(evCreak.some((e) => e.type === 'creak'), `harus ada creak, dapat: ${JSON.stringify(evCreak)}`);
+
+  // corn: ambil jagung
+  const w6 = freshWorld();
+  const corn = w6.stage.def.corn[0];
+  w6.turkey.x = corn.x;
+  w6.turkey.y = corn.y;
+  const evCorn = updateWorld(w6, NO_INPUT, 0.1);
+  assert.ok(evCorn.some((e) => e.type === 'corn'), `harus ada corn, dapat: ${JSON.stringify(evCorn)}`);
+});
+
+// M3: bilah "Jarak ke Kebebasan" harus bisa mencapai penuh di pintu stage 3.
+test('M3: freedomProgress mencapai 1.0 di pintu keluar stage 3', () => {
+  const w = freshWorld();
+  startStage(w, 2);
+  const e = w.stage.def.exit;
+  w.turkey.x = e.x + e.w / 2;
+  w.turkey.y = e.y + e.h / 2;
+  assert.equal(freedomProgress(w), 1);
+});
+

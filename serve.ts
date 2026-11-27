@@ -2,10 +2,11 @@
 // Node 22, stdlib saja. Jalankan: node serve.ts
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
+const GAME_ROOT = join(here, 'game');
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -18,8 +19,15 @@ const MIME = {
 
 const server = createServer(async (req, res) => {
   try {
-    const path = req.url.split('?')[0] === '/' ? '/index.html' : req.url.split('?')[0];
-    const file = join(here, 'game', decodeURIComponent(path));
+    const raw = req.url.split('?')[0];
+    const rel = raw === '/' ? '/index.html' : raw;
+    // Tolak path traversal: resolve lalu verifikasi hasil tetap di bawah game/.
+    const file = resolve(GAME_ROOT, `.${decodeURIComponent(rel)}`);
+    if (file !== GAME_ROOT && !file.startsWith(GAME_ROOT + sep)) {
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('not found');
+      return;
+    }
     const data = await readFile(file);
     res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
     res.end(data);

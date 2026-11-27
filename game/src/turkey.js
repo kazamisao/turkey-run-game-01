@@ -70,10 +70,8 @@ export function updateTurkey(t, input, dt, stage) {
     t.x = moved.x;
     t.y = moved.y;
   } else if (!input.sprint) {
-    t.stamina = Math.min(100, t.stamina + STAMINA_REGEN * dt);
-  }
-
-  if (!moving) {
+    // Diam (tidak bergerak, tidak menahan sprint): pulih 20/dtk — SATU-SATUNYA
+    // jalur regen. Jalan kaki tanpa sprint sengaja tidak regen (dikunci uji I3).
     t.stamina = Math.min(100, t.stamina + STAMINA_REGEN * dt);
   }
 

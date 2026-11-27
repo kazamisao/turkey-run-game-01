@@ -11,7 +11,7 @@ export const LOSE_DELAY = 2.5;
 export const SEARCH_TIME = 3;
 export const INVESTIGATE_TIME = 2;
 export const PATROL_SPEED = 70;
-export const CHASE_SPEED = 150;
+export const CHASE_SPEED = 190; // > jalan kalkun (170), < sprint (260): kejar bisa menutup jarak
 export const SEARCH_SPEED = 110;
 export const FARMER_RADIUS = 18;
 

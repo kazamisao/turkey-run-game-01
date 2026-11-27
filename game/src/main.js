@@ -2,7 +2,7 @@
 // loop game, dan mode ?shot= untuk screenshot deterministik.
 import { createWorld, startGame, updateWorld } from './world.js';
 import { render, VIEW_W, VIEW_H } from './render.js';
-import { audio, updateEffects } from './feedback.js';
+import { audio, updateEffects, spawnParticles, spawnFloatText } from './feedback.js';
 import { stageShot } from './shots.js';
 import { START_BUTTON, RESTART_BUTTON } from './screens.js';
 
@@ -17,6 +17,7 @@ canvas.height = SCALE_H;
 const world = createWorld();
 const keys = new Set();
 let mouse = { x: 0, y: 0 };
+let pendingThrow = null;
 let shotMode = null;
 
 function toLogical(clientX, clientY) {
@@ -76,8 +77,35 @@ canvas.addEventListener('click', (ev) => {
   }
 });
 
-let pendingThrow = null;
 let last = performance.now();
+
+/** Petakan event gameplay (dari updateWorld) ke suara + efek visual. */
+function playEvent(ev) {
+  switch (ev.type) {
+    case 'spotted': audio.alert(); break;
+    case 'hurt':
+      audio.hurt();
+      spawnParticles(ev.x, ev.y, '#e63946', 12);
+      spawnFloatText(ev.x, ev.y - 24, 'ADUH!', '#e63946');
+      break;
+    case 'caught':
+      audio.caught();
+      spawnParticles(ev.x, ev.y, '#e63946', 16);
+      spawnFloatText(ev.x, ev.y - 24, 'TERTANGKAP!', '#e63946');
+      break;
+    case 'stageClear': audio.stageClear(); break;
+    case 'success': audio.success(); break;
+    case 'knife': audio.knife(); break;
+    case 'oven': audio.oven(); break;
+    case 'creak': audio.creak(); break;
+    case 'corn':
+      spawnParticles(ev.x, ev.y, '#ffd166', 10);
+      spawnFloatText(ev.x, ev.y - 20, '+10', '#ffd166');
+      break;
+    case 'bait': audio.gobble(); break;
+    default: break;
+  }
+}
 
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
@@ -85,7 +113,8 @@ function frame(now) {
   if (world.screen === 'play') {
     const input = readInput();
     if (pendingThrow) { input.throwAt = pendingThrow; pendingThrow = null; }
-    updateWorld(world, input, dt);
+    const events = updateWorld(world, input, dt);
+    for (const ev of events) playEvent(ev);
     updateEffects(dt);
   }
   ctx.save();

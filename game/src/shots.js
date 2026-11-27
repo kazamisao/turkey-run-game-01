@@ -40,12 +40,14 @@ export function stageShot(name, world) {
     return { screen: 'play', best: world.score };
   }
   if (name === 'kitchen') {
-    // Dapur: kalkun dekat oven, petani MENGEJAR ("!"), oven hampir menyembur.
+    // Dapur: kalkun dekat oven, petani MENGEJAR ("!"), oven menyembur.
+    // Petani di (600,260): ruang terbuka di kanan pulau dapur (x 380-580),
+    // garis pandang bersih ke kalkun — bukan di dalam dinding.
     startStage(world, 2);
     world.invulnTimer = 0;
     world.turkey.x = 730;
     world.turkey.y = 260;
-    world.farmer.x = 560;
+    world.farmer.x = 600;
     world.farmer.y = 260;
     world.farmer.angle = 0;
     world.farmer.state = 'chase';

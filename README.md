@@ -29,7 +29,7 @@ stage, medali replay: tanpa terlihat, tanpa terluka, kabur cepat.
 - `game/src/screens.js` — title & layar akhir
 - `game/src/feedback.js` — HUD, suara WebAudio, partikel
 - `game/src/shots.js` — adegan screenshot deterministik (`?shot=`)
-- `tests/logic.test.mjs` — 33 uji logika (`node --test tests/logic.test.mjs`)
+- `tests/logic.test.mjs` — 42 uji logika (`node --test tests/logic.test.mjs`)
 
 Entry untuk kompetisi [turkey-run-game-01](https://make.fun/c/turkey-run-game-01/)
 di make.fun. Lisensi MIT.

@@ -71,7 +71,8 @@ function pushMessage(w, text) {
 }
 
 function hurtTurkey(w, cause) {
-  if (w.invulnTimer > 0 || w.screen !== 'play') return;
+  if (w.invulnTimer > 0 || w.screen !== 'play') return null;
+  const type = cause === 'caught' ? 'caught' : 'hurt';
   w.lives -= 1;
   w.hurtThisStage = true;
   w.stats.hurt = true;
@@ -79,9 +80,11 @@ function hurtTurkey(w, cause) {
   if (w.lives <= 0) {
     w.screen = 'gameover';
     w.medals = computeMedals(w, false);
-    return;
+    return { type, x: w.turkey.x, y: w.turkey.y };
   }
   // Respawn di awal stage yang sama, petani kembali patroli.
+  // Umpan sengaja TIDAK diisi ulang saat respawn — jatah umpan per-stage,
+  // diisi ulang hanya di startStage.
   const def = w.stage.def;
   w.turkey.x = def.spawn.x;
   w.turkey.y = def.spawn.y;
@@ -92,6 +95,7 @@ function hurtTurkey(w, cause) {
   w.invulnTimer = INVULN_AFTER_HIT;
   w.exitChannel = 0;
   w.bait = null;
+  return { type, x: def.spawn.x, y: def.spawn.y };
 }
 
 function computeMedals(w, escaped) {
@@ -111,32 +115,55 @@ function completeStage(w) {
     w.screen = 'escaped';
     w.medals = computeMedals(w, true);
     w.best = Math.max(w.best, w.score);
-    return;
+    return { type: 'success' };
   }
   pushMessage(w, `${w.stage.def.name} dilewati! +${STAGE_BONUS + timeBonus}`);
   startStage(w, w.stageIndex + 1);
+  return { type: 'stageClear' };
 }
 
+/**
+ * Majukan bahaya berkala. Mengembalikan event saat hazard mulai aktif:
+ * {type:'knife'} saat pisau masuk fase sweep, {type:'oven'} saat oven
+ * masuk fase burst — supaya main.js bisa membunyikan SFX-nya.
+ */
 function updateHazard(w, dt) {
   const hz = w.stage.def.hazards.knife || w.stage.def.hazards.oven;
-  if (!hz) return;
+  if (!hz) return null;
   const h = w.stage.hazard;
   h.timer += dt;
   const idle = hz.idle;
   const tele = hz.telegraph;
   const act = hz.sweep ?? hz.burst;
   if (h.phase === 'idle' && h.timer >= idle) { h.phase = 'telegraph'; h.timer = 0; }
-  else if (h.phase === 'telegraph' && h.timer >= tele) { h.phase = hz.sweep ? 'sweep' : 'burst'; h.timer = 0; }
+  else if (h.phase === 'telegraph' && h.timer >= tele) {
+    h.phase = hz.sweep ? 'sweep' : 'burst';
+    h.timer = 0;
+    return { type: hz.sweep ? 'knife' : 'oven' };
+  }
   else if ((h.phase === 'sweep' || h.phase === 'burst') && h.timer >= act) { h.phase = 'idle'; h.timer = 0; }
+  return null;
+}
+
+/** Posisi bilah pisau saat ini — rumus yang sama dengan render (drawHazards). */
+export function knifeBladeX(w) {
+  const def = w.stage.def;
+  const z = def.hazards.knife.zone;
+  const p = Math.min(1, w.stage.hazard.timer / def.hazards.knife.sweep);
+  return z.x + p * (z.w - 30);
 }
 
 function hazardHitsTurkey(w) {
   const def = w.stage.def;
   const h = w.stage.hazard;
   if (h.phase === 'sweep' && def.hazards.knife) {
+    // Hitbox = posisi bilah, bukan seluruh zona: hanya kena bila kalkun
+    // dekat bilah (bx) dan masih di lajur zona secara vertikal.
     const z = def.hazards.knife.zone;
-    const inZone = w.turkey.x > z.x && w.turkey.x < z.x + z.w && w.turkey.y > z.y && w.turkey.y < z.y + z.h;
-    return inZone && w.turkey.jumping <= 0;
+    const bx = knifeBladeX(w);
+    const nearBlade = Math.abs(w.turkey.x - bx) < 30;
+    const inLane = w.turkey.y > z.y && w.turkey.y < z.y + z.h;
+    return nearBlade && inLane && w.turkey.jumping <= 0;
   }
   if (h.phase === 'burst' && def.hazards.oven) {
     const z = def.hazards.oven.zone;
@@ -151,9 +178,15 @@ function turkeyInExit(w) {
     && w.turkey.y > e.y - 6 && w.turkey.y < e.y + e.h + 6;
 }
 
-/** Majukan dunia satu langkah. `input`: {mx,my,sprint,jump,hide,throwAt}. */
+/**
+ * Majukan dunia satu langkah. `input`: {mx,my,sprint,jump,hide,throwAt}.
+ * Mengembalikan event gameplay langkah ini — main.js memetakannya ke suara
+ * dan efek: spotted, lost, investigating, done-investigating, bait, corn,
+ * knife, oven, hurt, caught, creak, stageClear, success.
+ */
 export function updateWorld(w, input, dt) {
   if (w.screen !== 'play') return [];
+  const events = [];
   w.time += dt;
   w.stage.stageTime += dt;
   if (w.invulnTimer > 0) w.invulnTimer -= dt;
@@ -174,6 +207,7 @@ export function updateWorld(w, input, dt) {
       w.bait = { x: ev.x, y: ev.y };
       w.baitTimer = 12;
       pushMessage(w, 'Umpan dilempar — petani mengendus!');
+      events.push({ type: 'bait', x: ev.x, y: ev.y });
     }
   }
   if (w.baitTimer > 0) {
@@ -189,6 +223,7 @@ export function updateWorld(w, input, dt) {
     turkey: w.turkey, walls: farmerWalls, bait: w.bait, noise,
   });
   for (const ev of fEvents) {
+    events.push(ev);
     if (ev.type === 'spotted') {
       w.spottedThisStage = true;
       w.stats.spotted = true;
@@ -205,27 +240,36 @@ export function updateWorld(w, input, dt) {
       w.stage.cornTaken[i] = true;
       w.score += CORN_SCORE;
       w.stats.corn += 1;
+      events.push({ type: 'corn', x: c.x, y: c.y });
     }
   });
 
-  updateHazard(w, dt);
-  if (hazardHitsTurkey(w)) hurtTurkey(w, 'hazard');
-  if (w.screen !== 'play') return [];
+  const hzEvent = updateHazard(w, dt);
+  if (hzEvent) events.push(hzEvent);
+  if (hazardHitsTurkey(w)) {
+    const hurtEvent = hurtTurkey(w, 'hazard');
+    if (hurtEvent) events.push(hurtEvent);
+  }
+  if (w.screen !== 'play') return events;
 
   // Ditangkap petani saat bersentuhan (kecuali sedang kebal / sembunyi).
   const fd = Math.hypot(w.farmer.x - w.turkey.x, w.farmer.y - w.turkey.y);
-  if (fd < CATCH_DISTANCE && !w.turkey.hidden) hurtTurkey(w, 'caught');
-  if (w.screen !== 'play') return [];
+  if (fd < CATCH_DISTANCE && !w.turkey.hidden) {
+    const hurtEvent = hurtTurkey(w, 'caught');
+    if (hurtEvent) events.push(hurtEvent);
+  }
+  if (w.screen !== 'play') return events;
 
   // Pintu keluar: stage 1 langsung, stage 2-3 butuh menahan (berderit!).
   if (turkeyInExit(w)) {
     const channel = def.exit.channel;
     if (channel === 0) {
-      completeStage(w);
-      return [];
+      events.push(completeStage(w));
+      return events;
     }
     if (!w.creakDone) {
       w.creakDone = true;
+      events.push({ type: 'creak' });
       pushMessage(w, 'Pintu berderit... jangan sampai ketahuan!');
       const ed = Math.hypot(w.farmer.x - def.exit.x, w.farmer.y - def.exit.y);
       if (ed < 320 && w.farmer.state !== 'chase') {
@@ -236,14 +280,14 @@ export function updateWorld(w, input, dt) {
     }
     w.exitChannel += dt;
     if (w.exitChannel >= channel) {
-      completeStage(w);
-      return [];
+      events.push(completeStage(w));
+      return events;
     }
   } else {
     w.exitChannel = 0;
     w.creakDone = false;
   }
-  return [];
+  return events;
 }
 
 /** Kemajuan menuju kebebasan 0..1 untuk HUD "Jarak ke Kebebasan". */
@@ -252,5 +296,5 @@ export function freedomProgress(w) {
   const e = w.stage.def.exit;
   const d = Math.hypot(w.turkey.x - (e.x + e.w / 2), w.turkey.y - (e.y + e.h / 2));
   const near = Math.max(0, 1 - d / 700);
-  return Math.min(1, (w.stageIndex + near * 0.6) / STAGES.length);
+  return Math.min(1, (w.stageIndex + near) / STAGES.length);
 }
